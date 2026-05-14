@@ -1,0 +1,48 @@
+# =============================================================================
+# ARQUIVO DE EXEMPLO — find_lyrics.py
+# =============================================================================
+#
+# COMO USAR:
+#   python find_lyrics.py musicas.example.txt
+#
+# OPÇÕES:
+#   --output ./pasta     Diretório de saída (padrão: ./letras)
+#   --single nome.pdf    Gera UM único PDF com todas as músicas
+#
+# EXEMPLOS DE COMANDO:
+#   python find_lyrics.py musicas.txt
+#   python find_lyrics.py musicas.txt --output ./pdfs
+#   python find_lyrics.py musicas.txt --single repertorio.pdf
+#   python find_lyrics.py musicas.txt --single repertorio.pdf --output ./missa
+#
+# =============================================================================
+# FORMATO DAS LINHAS
+# =============================================================================
+#
+# FORMATO 1 — Com artista (busca mais precisa, recomendado):
+#   Artista - Música
+#
+# FORMATO 2 — Apenas título (o script busca o artista automaticamente):
+#   Música
+#
+# Linhas em branco e linhas começando com # são ignoradas.
+#
+# =============================================================================
+# EXEMPLOS
+# =============================================================================
+
+# --- Com artista (recomendado) ---
+Colo de Deus - Cheiro de Rosas
+Anjos de Resgate - Mais que Amigos
+Fraternidade São João Paulo II - Terra Seca
+Padre Marcelo Rossi - Sonda-me
+Vencedores por Cristo - Buscai Primeiro
+Davidson Silva - Sinal do meu Amor
+Frei Gilson - Deixa Deus Sonhar em Ti
+Nando Reis - Pra Você Guardei o Amor
+Roberta Campos - Janeiro a Janeiro
+
+# --- Apenas o título (artista descoberto automaticamente via busca) ---
+Hallelujah
+Bohemian Rhapsody
+Imagine
