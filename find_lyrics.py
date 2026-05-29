@@ -1,9 +1,10 @@
 """
-find_lyrics.py — Busca letras de músicas no letras.mus.br e gera PDFs.
+find_lyrics.py — Busca letras de músicas no letras.mus.br e gera PDF ou DOCX.
 
 Uso:
-    python find_lyrics.py musicas.txt
-    python find_lyrics.py musicas.txt --output ./pdfs
+    python find_lyrics.py musicas.txt              # Gera DOCX (padrão)
+    python find_lyrics.py musicas.txt --format pdf # Gera PDF
+    python find_lyrics.py musicas.txt --single repertorio.docx
 
 Formato do arquivo .txt:
     Artista - Música
@@ -20,6 +21,10 @@ from urllib.parse import quote
 from curl_cffi import requests as cffi_requests
 from bs4 import BeautifulSoup
 from ddgs import DDGS
+from docx import Document
+from docx.shared import Pt, RGBColor, Inches
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
 from fpdf import FPDF
 from unidecode import unidecode
 
@@ -235,8 +240,85 @@ def fetch_lyrics(artist: str | None, song: str) -> tuple[str, str, str] | tuple[
 
 
 # ---------------------------------------------------------------------------
+# DOCX
+# ---------------------------------------------------------------------------
+
+def _write_song(doc: Document, artist: str, song_title: str, lyrics: str):
+    """Escreve uma música no objeto Document."""
+    # Título da música
+    title_para = doc.add_paragraph()
+    title_run = title_para.add_run(song_title)
+    title_run.font.size = Pt(20)
+    title_run.font.bold = True
+    title_run.font.color.rgb = RGBColor(30, 30, 30)
+    title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    # Artista
+    artist_para = doc.add_paragraph()
+    artist_run = artist_para.add_run(artist)
+    artist_run.font.size = Pt(13)
+    artist_run.font.italic = True
+    artist_run.font.color.rgb = RGBColor(80, 80, 80)
+    artist_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    # Linha divisória (parágrafo com borda)
+    divider = doc.add_paragraph()
+    pPr = divider._element.get_or_add_pPr()
+    pBdr = pPr.find("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}pBdr")
+    if pBdr is None:
+        pBdr = OxmlElement("w:pBdr")
+        pPr.append(pBdr)
+    bottom = OxmlElement("w:bottom")
+    bottom.set("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val", "single")
+    bottom.set("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}sz", "12")
+    bottom.set("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}space", "1")
+    bottom.set("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}color", "C8C8C8")
+    pBdr.append(bottom)
+
+    # Letra
+    for line in lyrics.splitlines():
+        if line.strip():
+            p = doc.add_paragraph(line)
+            p_format = p.paragraph_format
+            p_format.line_spacing = 1.15
+            for run in p.runs:
+                run.font.size = Pt(10)
+                run.font.color.rgb = RGBColor(40, 40, 40)
+        else:
+            # Linha em branco para separar estrofes
+            doc.add_paragraph()
+
+    # Página nova antes da próxima música
+    doc.add_page_break()
+
+
+def generate_docx(artist: str, song_title: str, lyrics: str, output_path: str):
+    """Gera um DOCX individual para uma música."""
+    doc = Document()
+    _write_song(doc, artist, song_title, lyrics)
+    doc.save(output_path)
+
+
+def generate_combined_docx(songs_data: list[tuple[str, str, str]], output_path: str):
+    """Gera um único DOCX com todas as músicas, cada uma começando numa nova página."""
+    doc = Document()
+    for i, (artist, title, lyrics) in enumerate(songs_data):
+        _write_song(doc, artist, title, lyrics)
+    # Remove o último page break
+    if doc.paragraphs and doc.paragraphs[-1].text == "":
+        p = doc.paragraphs[-1]._element
+        p.getparent().remove(p)
+    doc.save(output_path)
+
+
+# ---------------------------------------------------------------------------
 # PDF
 # ---------------------------------------------------------------------------
+
+def safe_text(text: str) -> str:
+    """Remove caracteres que a fpdf2 não consegue renderizar em Latin-1."""
+    return text.encode("latin-1", errors="replace").decode("latin-1")
+
 
 class LyricsPDF(FPDF):
     def header(self):
@@ -249,12 +331,7 @@ class LyricsPDF(FPDF):
         self.cell(0, 10, f"Página {self.page_no()}", align="C")
 
 
-def safe_text(text: str) -> str:
-    """Remove caracteres que a fpdf2 não consegue renderizar em Latin-1."""
-    return text.encode("latin-1", errors="replace").decode("latin-1")
-
-
-def _write_song(pdf: FPDF, artist: str, song_title: str, lyrics: str, first: bool = False):
+def _write_song_pdf(pdf: FPDF, artist: str, song_title: str, lyrics: str, first: bool = False):
     """Escreve uma música no objeto PDF com letra em 2 colunas."""
     if not first:
         pdf.add_page()
@@ -319,8 +396,12 @@ def _write_song(pdf: FPDF, artist: str, song_title: str, lyrics: str, first: boo
             y += gap_h
         else:
             pdf.set_xy(col_x[current_col], y)
+            y_before = pdf.get_y()
             pdf.multi_cell(col_w, line_h, safe_text(line), align="L")
-            y += line_h
+            y_after = pdf.get_y()
+            # Usa a altura real que o multi_cell consumiu
+            actual_height = y_after - y_before
+            y = y_before + max(actual_height, line_h)
 
     # Garante que o cursor fique depois do conteúdo gerado
     pdf.set_y(page_bottom)
@@ -331,7 +412,7 @@ def generate_pdf(artist: str, song_title: str, lyrics: str, output_path: str):
     pdf = LyricsPDF()
     pdf.set_auto_page_break(auto=True, margin=20)
     pdf.add_page()
-    _write_song(pdf, artist, song_title, lyrics, first=True)
+    _write_song_pdf(pdf, artist, song_title, lyrics, first=True)
     pdf.output(output_path)
 
 
@@ -341,7 +422,7 @@ def generate_combined_pdf(songs_data: list[tuple[str, str, str]], output_path: s
     pdf.set_auto_page_break(auto=True, margin=20)
     for i, (artist, title, lyrics) in enumerate(songs_data):
         pdf.add_page()
-        _write_song(pdf, artist, title, lyrics, first=True)
+        _write_song_pdf(pdf, artist, title, lyrics, first=True)
     pdf.output(output_path)
 
 
@@ -367,18 +448,24 @@ def parse_songs_file(filepath: str) -> list[tuple[str | None, str]]:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Busca letras no letras.mus.br e gera PDFs."
+        description="Busca letras no letras.mus.br e gera documentos Word ou PDF."
     )
     parser.add_argument("songs_file", help="Arquivo .txt com lista de músicas")
     parser.add_argument(
         "--output",
         default="./letras",
-        help="Diretório de saída dos PDFs (padrão: ./letras)",
+        help="Diretório de saída dos documentos (padrão: ./letras)",
     )
     parser.add_argument(
         "--single",
         metavar="NOME",
-        help="Gera um único PDF com todas as músicas. Ex: --single repertorio.pdf",
+        help="Gera um único documento com todas as músicas. Ex: --single repertorio.docx",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["docx", "pdf"],
+        default="docx",
+        help="Formato de saída: docx (padrão) ou pdf",
     )
     args = parser.parse_args()
 
@@ -407,14 +494,19 @@ def main():
             ok += 1
             if args.single:
                 combined.append((real_artist or artist or "", title, lyrics))
-                print(f"  [OK] Adicionado ao PDF combinado")
+                print(f"  [OK] Adicionado ao {args.format.upper()} combinado")
             else:
                 slug_artist = slugify(real_artist or artist or "desconhecido")
                 slug_song = slugify(title or song)
-                filename = f"{slug_artist}-{slug_song}.pdf"
+                filename = f"{slug_artist}-{slug_song}.{args.format}"
                 output_path = os.path.join(args.output, filename)
-                generate_pdf(real_artist or artist or "", title, lyrics, output_path)
-                print(f"  [OK] PDF salvo: {output_path}")
+                
+                if args.format == "docx":
+                    generate_docx(real_artist or artist or "", title, lyrics, output_path)
+                else:
+                    generate_pdf(real_artist or artist or "", title, lyrics, output_path)
+                
+                print(f"  [OK] {args.format.upper()} salvo: {output_path}")
         else:
             fail += 1
 
@@ -423,10 +515,16 @@ def main():
 
     if args.single and combined:
         single_path = os.path.join(args.output, args.single)
-        if not single_path.endswith(".pdf"):
-            single_path += ".pdf"
-        generate_combined_pdf(combined, single_path)
-        print(f"\n[OK] PDF combinado salvo: {single_path}")
+        # Adiciona extensão se não tiver
+        if not single_path.endswith(f".{args.format}"):
+            single_path += f".{args.format}"
+        
+        if args.format == "docx":
+            generate_combined_docx(combined, single_path)
+        else:
+            generate_combined_pdf(combined, single_path)
+        
+        print(f"\n[OK] {args.format.upper()} combinado salvo: {single_path}")
 
     print(f"\n✓ Concluído: {ok} música(s) gerada(s), {fail} falha(s).")
     print(f"  Saída: {os.path.abspath(args.output)}")

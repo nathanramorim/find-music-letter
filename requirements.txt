@@ -1,5 +1,6 @@
 curl-cffi
 beautifulsoup4
+python-docx
 fpdf2
 unidecode
 ddgs
