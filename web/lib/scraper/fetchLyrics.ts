@@ -20,7 +20,7 @@ export async function fetchLyrics(
   song: string
 ): Promise<LyricsResult | null> {
   const query = artist ? `${artist} ${song}` : song
-  const link = await searchSong(query)
+  const link = await searchSong(query, artist)
   if (!link) return null
 
   const printUrl = `${link.fullUrl.replace(/\/$/, '')}/print.html`

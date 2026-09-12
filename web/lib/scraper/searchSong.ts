@@ -1,6 +1,7 @@
 import * as cheerio from 'cheerio'
 import { fetchHtml } from './http'
 import { extractLetrasUrlFromHref, type LetrasLink } from './extractLetrasUrl'
+import { slugify } from '../parsing/slugify'
 
 const BASE_URL = 'https://www.letras.mus.br'
 
@@ -18,7 +19,7 @@ interface SolrDoc {
  * this is the site's own public read endpoint, so it isn't subject to
  * anti-bot blocking of datacenter IPs.
  */
-async function searchViaSolr(query: string): Promise<LetrasLink | null> {
+async function searchViaSolr(query: string, artistHint?: string | null): Promise<LetrasLink | null> {
   const searchUrl = `https://solr.sscdn.co/letras/m1/?wt=json&q=${encodeURIComponent(query)}`
   const body = await fetchHtml(searchUrl)
   if (!body) return null
@@ -33,8 +34,14 @@ async function searchViaSolr(query: string): Promise<LetrasLink | null> {
     return null
   }
 
-  const song = docs.find((doc) => doc.t === '2')
-  if (!song) return null
+  const songs = docs.filter((doc) => doc.t === '2')
+  if (songs.length === 0) return null
+
+  // Solr ranks by full-text relevance, which can surface a same-titled song by
+  // a different artist. When the caller knows the artist, prefer a doc whose
+  // artist actually matches instead of blindly trusting the top score.
+  const artistSlug = artistHint ? slugify(artistHint) : null
+  const song = (artistSlug && songs.find((doc) => slugify(doc.art).includes(artistSlug))) || songs[0]
 
   return {
     artistName: song.art,
@@ -120,8 +127,8 @@ async function searchViaBing(query: string): Promise<LetrasLink | null> {
  * falling back to DuckDuckGo then Bing HTML scraping only if that finds
  * nothing.
  */
-export async function searchSong(query: string): Promise<LetrasLink | null> {
-  const direct = await searchViaSolr(query)
+export async function searchSong(query: string, artistHint?: string | null): Promise<LetrasLink | null> {
+  const direct = await searchViaSolr(query, artistHint)
   if (direct) return direct
 
   const viaDuckDuckGo = await searchViaDuckDuckGo(query)

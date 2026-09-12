@@ -53,6 +53,27 @@ describe('searchSong', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  it('prefers a Solr doc matching the artist hint over the top-scored doc', async () => {
+    const solrBody = JSON.stringify({
+      response: {
+        docs: [
+          { art: 'Outra Banda', dns: 'outra-banda', txt: 'Eu e Minha Casa', t: '2', url: 'eu-e-minha-casa' },
+          { art: 'Juliany Souza', dns: 'juliany-souza', txt: 'Eu e Minha Casa', t: '2', url: '999' },
+        ],
+      },
+    })
+
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(`LetrasSug(${solrBody})`, { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await searchSong('Juliany Souza Eu e Minha Casa', 'Juliany Souza')
+    expect(result).toEqual({
+      artistName: 'Juliany Souza',
+      songName: 'Eu e Minha Casa',
+      fullUrl: 'https://www.letras.mus.br/juliany-souza/999/',
+    })
+  })
+
   it('falls back to DuckDuckGo when Solr finds nothing', async () => {
     const fetchMock = vi
       .fn()
