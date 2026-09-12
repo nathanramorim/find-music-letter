@@ -53,4 +53,30 @@ describe('searchSong', () => {
     })
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
+
+  it('falls back to Bing when both letras.mus.br and DuckDuckGo find nothing', async () => {
+    const bingHref =
+      'https://www.bing.com/ck/a?u=a1' +
+      Buffer.from('https://www.letras.mus.br/titas/epitafio/').toString('base64url')
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('<html><body></body></html>', { status: 200 }))
+      .mockResolvedValueOnce(new Response('<html><body></body></html>', { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          `<html><body><li class="b_algo"><h2><a href="${bingHref}">Epitáfio - Titãs</a></h2></li></body></html>`,
+          { status: 200 }
+        )
+      )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await searchSong('Titãs Epitáfio')
+    expect(result).toEqual({
+      artistName: 'Titãs',
+      songName: 'Epitáfio',
+      fullUrl: 'https://www.letras.mus.br/titas/epitafio/',
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
 })
