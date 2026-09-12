@@ -1,58 +1,54 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { SongInput } from './components/SongInput'
 import { OutputOptions } from './components/OutputOptions'
-import { ProgressView } from './components/ProgressView'
 import { DownloadResult } from './components/DownloadResult'
-import type { Job, OutputFormat, OutputMode } from '@/lib/jobs/types'
+import type { JobResultEntry, OutputFormat, OutputMode } from '@/lib/jobs/types'
 
-const POLL_INTERVAL_MS = 1000
+interface JobResponse {
+  filename: string
+  contentType: string
+  data: string
+  results: JobResultEntry[]
+}
 
 export default function Home() {
   const [songsText, setSongsText] = useState('')
   const [format, setFormat] = useState<OutputFormat>('docx')
   const [mode, setMode] = useState<OutputMode>('merged')
-  const [job, setJob] = useState<Job | null>(null)
+  const [isRunning, setIsRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
-  const isRunning = job?.status === 'pending' || job?.status === 'running'
-
-  useEffect(() => {
-    if (!job || job.status === 'done' || job.status === 'error') {
-      if (pollRef.current) clearInterval(pollRef.current)
-      return
-    }
-
-    pollRef.current = setInterval(async () => {
-      const res = await fetch(`/api/jobs/${job.id}`)
-      if (res.ok) setJob(await res.json())
-    }, POLL_INTERVAL_MS)
-
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current)
-    }
-  }, [job])
+  const [result, setResult] = useState<{ url: string; filename: string; results: JobResultEntry[] } | null>(
+    null
+  )
 
   async function handleSubmit() {
     setError(null)
-    setJob(null)
+    setResult(null)
+    setIsRunning(true)
 
-    const res = await fetch('/api/jobs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ songsText, format, mode }),
-    })
+    try {
+      const res = await fetch('/api/jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ songsText, format, mode }),
+      })
 
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({ error: 'Falha ao iniciar o processamento.' }))
-      setError(body.error ?? 'Falha ao iniciar o processamento.')
-      return
+      const body = await res.json().catch(() => ({ error: 'Falha ao processar as músicas.' }))
+
+      if (!res.ok) {
+        setError(body.error ?? 'Falha ao processar as músicas.')
+        return
+      }
+
+      const { filename, contentType, data, results } = body as JobResponse
+      const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0))
+      const blob = new Blob([bytes], { type: contentType })
+      setResult({ url: URL.createObjectURL(blob), filename, results })
+    } finally {
+      setIsRunning(false)
     }
-
-    const { id } = await res.json()
-    setJob({ id, status: 'pending', total: 0, processed: 0, results: [], downloadFilename: null, error: null })
   }
 
   return (
@@ -99,10 +95,16 @@ export default function Home() {
             {isRunning ? 'Processando…' : 'Buscar letras'}
           </button>
 
+          {isRunning && (
+            <p className="text-sm text-muted">
+              Buscando as letras e montando o documento. Isso pode levar alguns segundos, um
+              pouquinho mais por música.
+            </p>
+          )}
+
           {error && <p className="text-sm text-primary">{error}</p>}
 
-          {job && <ProgressView job={job} />}
-          {job && (job.status === 'done' || job.status === 'error') && <DownloadResult job={job} />}
+          {result && <DownloadResult url={result.url} filename={result.filename} results={result.results} />}
         </section>
 
         <section

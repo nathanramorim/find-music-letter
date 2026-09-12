@@ -14,14 +14,9 @@ export interface JobResultEntry {
   ok: boolean
 }
 
-export type JobStatus = 'pending' | 'running' | 'done' | 'error'
-
-export interface Job {
-  id: string
-  status: JobStatus
-  total: number
-  processed: number
+export interface ProcessResult {
+  filename: string
+  contentType: string
+  data: Buffer
   results: JobResultEntry[]
-  downloadFilename: string | null
-  error: string | null
 }

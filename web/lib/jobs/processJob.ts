@@ -4,9 +4,7 @@ import { generateCombinedDocx, generateDocx } from '../docgen/generateDocx'
 import { generateCombinedPdf, generatePdf } from '../docgen/generatePdf'
 import type { SongDocument } from '../docgen/types'
 import { slugify } from '../parsing/slugify'
-import { saveResult } from '../storage/tempStorage'
-import { getJob, updateJob } from './jobStore'
-import type { Job, JobOptions } from './types'
+import type { JobOptions, JobResultEntry, ProcessResult } from './types'
 
 /** Minimum delay between requests to the source site, mirrors DELAY_SECONDS in find_lyrics.py. */
 const DELAY_MS = process.env.VITEST ? 0 : 1500
@@ -15,12 +13,15 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-/** Processes a job in the background: fetches each song's lyrics, then generates the output document(s). */
-export async function runJob(jobId: string, options: JobOptions): Promise<void> {
-  updateJob(jobId, { status: 'running' })
-
+/**
+ * Fetches lyrics for every song and generates the output document(s), all
+ * within a single call so the whole flow runs inside one request/response
+ * (no cross-request state, which Vercel serverless functions don't share
+ * reliably between invocations).
+ */
+export async function processSongs(options: JobOptions): Promise<ProcessResult> {
   const songs: SongDocument[] = []
-  const results: Job['results'] = []
+  const results: JobResultEntry[] = []
 
   for (let i = 0; i < options.songs.length; i++) {
     const { artist, song } = options.songs[i]
@@ -34,30 +35,21 @@ export async function runJob(jobId: string, options: JobOptions): Promise<void> 
       results.push({ label, ok: false })
     }
 
-    updateJob(jobId, { processed: i + 1, results: [...results] })
-
     if (i < options.songs.length - 1) {
       await sleep(DELAY_MS)
     }
   }
 
   if (songs.length === 0) {
-    updateJob(jobId, { status: 'error', error: 'Nenhuma música encontrada.' })
-    return
+    throw new Error('Nenhuma música encontrada.')
   }
 
-  try {
-    const { filename, contentType, data } = await buildOutput(jobId, songs, options)
-    saveResult(jobId, filename, contentType, data)
-    updateJob(jobId, { status: 'done', downloadFilename: filename })
-  } catch (err) {
-    updateJob(jobId, { status: 'error', error: err instanceof Error ? err.message : 'Erro desconhecido' })
-  }
+  const { filename, contentType, data } = await buildOutput(songs, options)
+  return { filename, contentType, data, results }
 }
 
-async function buildOutput(jobId: string, songs: SongDocument[], options: JobOptions) {
-  const job = getJob(jobId)
-  const baseName = job ? `repertorio-${job.id.slice(0, 8)}` : 'repertorio'
+async function buildOutput(songs: SongDocument[], options: JobOptions) {
+  const baseName = `repertorio-${Date.now().toString(36)}`
 
   if (options.mode === 'merged') {
     const data =
