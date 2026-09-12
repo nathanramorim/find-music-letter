@@ -124,13 +124,37 @@ export default function Home() {
               ferramenta busca as letras e já entrega os documentos prontos, sem ter que caçar
               site por site antes de cada casamento.
             </p>
-            <p className="text-sm text-muted">Feito com carinho para quem vive de música.</p>
+            <p className="font-display italic text-primary">
+              Essa é uma homenagem pra minha esposa, Carolina. Te amo, Carolina{' '}
+              <span aria-hidden>♡</span>
+            </p>
+            <p className="text-sm text-muted">
+              Feito por{' '}
+              <a
+                href="https://instagram.com/nathan.ramorim"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-foreground hover:text-primary"
+              >
+                @nathan.ramorim
+              </a>{' '}
+              para{' '}
+              <a
+                href="https://instagram.com/carolinasantanamorim"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-foreground hover:text-primary"
+              >
+                @carolinasantanamorim
+              </a>
+              , com carinho para quem vive de música.
+            </p>
           </div>
         </section>
       </main>
 
       <footer className="w-full border-t border-border py-6 text-center text-xs text-muted">
-        find-music-letter · feito com carinho para quem vive de música.
+        find-music-letter · feito com carinho para quem vive de música
       </footer>
     </div>
   )
