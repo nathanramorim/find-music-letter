@@ -36,15 +36,9 @@ async function querySolr(query: string): Promise<SolrDoc[]> {
   }
 }
 
-function pickBestSong(docs: SolrDoc[], artistHint?: string | null): SolrDoc | null {
-  const songs = docs.filter((doc) => doc.t === '2')
-  if (songs.length === 0) return null
-
-  // Solr ranks by full-text relevance, which can surface a same-titled song by
-  // a different artist. When the caller knows the artist, prefer a doc whose
-  // artist actually matches instead of blindly trusting the top score.
-  const artistSlug = artistHint ? slugify(artistHint) : null
-  return (artistSlug && songs.find((doc) => slugify(doc.art).includes(artistSlug))) || songs[0]
+/** Finds the doc among song results (t==="2") whose artist matches the hint, if any. */
+function findArtistMatch(docs: SolrDoc[], artistSlug: string): SolrDoc | null {
+  return docs.filter((doc) => doc.t === '2').find((doc) => slugify(doc.art).includes(artistSlug)) ?? null
 }
 
 /**
@@ -53,21 +47,31 @@ function pickBestSong(docs: SolrDoc[], artistHint?: string | null): SolrDoc | nu
  * this is the site's own public read endpoint, so it isn't subject to
  * anti-bot blocking of datacenter IPs.
  *
- * Tries an exact query first; a typo in the artist/song name (ex:
- * "Souguelis" instead of "Souguellis") can make the exact query match
- * nothing at all, so a fuzzy retry (`~1` per word) follows as a second
- * attempt before giving up on this source.
+ * Tries an exact query first, then a fuzzy retry (`~1` per word) when
+ * the exact query either finds nothing, or — if the caller knows the
+ * artist — finds only songs by a *different* artist (Solr's relevance
+ * ranking can surface a same-titled song by another artist ahead of a
+ * misspelled one, ex: "Juliany" instead of "Julliany" Souza).
  */
 async function searchViaSolr(query: string, artistHint?: string | null): Promise<LetrasLink | null> {
-  let song = pickBestSong(await querySolr(query), artistHint)
+  const artistSlug = artistHint ? slugify(artistHint) : null
+  const exactDocs = await querySolr(query)
+  const exactSongs = exactDocs.filter((doc) => doc.t === '2')
+
+  let song = artistSlug ? findArtistMatch(exactDocs, artistSlug) : exactSongs[0]
 
   if (!song) {
     const fuzzyQuery = fuzzify(query)
     if (fuzzyQuery !== query) {
-      song = pickBestSong(await querySolr(fuzzyQuery), artistHint)
+      const fuzzyDocs = await querySolr(fuzzyQuery)
+      const fuzzySongs = fuzzyDocs.filter((doc) => doc.t === '2')
+      song = (artistSlug && findArtistMatch(fuzzyDocs, artistSlug)) || fuzzySongs[0]
     }
   }
 
+  // No confirmed artist match anywhere: fall back to the exact query's top result
+  // rather than reporting "not found" outright.
+  song ??= exactSongs[0]
   if (!song) return null
 
   return {

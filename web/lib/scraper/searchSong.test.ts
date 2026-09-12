@@ -74,6 +74,34 @@ describe('searchSong', () => {
     })
   })
 
+  it('retries fuzzy when the exact query only finds a different artist (typo in the hint)', async () => {
+    // Real case: user typed "Juliany Souza" but the site has it as "Julliany Souza" (double L).
+    const exactBody = JSON.stringify({
+      response: {
+        docs: [{ art: 'André e Felipe', dns: 'andre-e-felipe', txt: 'A Sós', t: '2', url: 'a-sos' }],
+      },
+    })
+    const fuzzyBody = JSON.stringify({
+      response: {
+        docs: [{ art: 'Julliany Souza', dns: 'julliany-souza', txt: 'Eu e Minha Casa', t: '2', url: '999' }],
+      },
+    })
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(`LetrasSug(${exactBody})`, { status: 200 }))
+      .mockResolvedValueOnce(new Response(`LetrasSug(${fuzzyBody})`, { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await searchSong('Juliany Souza Eu e Minha Casa', 'Juliany Souza')
+    expect(result).toEqual({
+      artistName: 'Julliany Souza',
+      songName: 'Eu e Minha Casa',
+      fullUrl: 'https://www.letras.mus.br/julliany-souza/999/',
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
   it('retries Solr with fuzzy terms, then falls back to DuckDuckGo when both find nothing', async () => {
     const fetchMock = vi
       .fn()
