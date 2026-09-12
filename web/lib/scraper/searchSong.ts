@@ -13,27 +13,30 @@ interface SolrDoc {
   url: string
 }
 
-/**
- * The instant-search API that powers letras.mus.br's own search box
- * (`solr.sscdn.co`). Unlike scraping a general-purpose search engine,
- * this is the site's own public read endpoint, so it isn't subject to
- * anti-bot blocking of datacenter IPs.
- */
-async function searchViaSolr(query: string, artistHint?: string | null): Promise<LetrasLink | null> {
+/** Appends Lucene's fuzzy operator (`~1`, one edit of tolerance) to each word of 4+ letters. */
+function fuzzify(query: string): string {
+  return query
+    .split(/\s+/)
+    .map((word) => (word.length >= 4 && /^[\p{L}\p{N}]+$/u.test(word) ? `${word}~1` : word))
+    .join(' ')
+}
+
+async function querySolr(query: string): Promise<SolrDoc[]> {
   const searchUrl = `https://solr.sscdn.co/letras/m1/?wt=json&q=${encodeURIComponent(query)}`
   const body = await fetchHtml(searchUrl)
-  if (!body) return null
+  if (!body) return []
 
   // Response is JSONP-wrapped (`LetrasSug({...})`) regardless of the callback param.
   const jsonText = body.replace(/^[^(]*\(/, '').replace(/\);?\s*$/, '')
 
-  let docs: SolrDoc[]
   try {
-    docs = JSON.parse(jsonText)?.response?.docs ?? []
+    return JSON.parse(jsonText)?.response?.docs ?? []
   } catch {
-    return null
+    return []
   }
+}
 
+function pickBestSong(docs: SolrDoc[], artistHint?: string | null): SolrDoc | null {
   const songs = docs.filter((doc) => doc.t === '2')
   if (songs.length === 0) return null
 
@@ -41,7 +44,31 @@ async function searchViaSolr(query: string, artistHint?: string | null): Promise
   // a different artist. When the caller knows the artist, prefer a doc whose
   // artist actually matches instead of blindly trusting the top score.
   const artistSlug = artistHint ? slugify(artistHint) : null
-  const song = (artistSlug && songs.find((doc) => slugify(doc.art).includes(artistSlug))) || songs[0]
+  return (artistSlug && songs.find((doc) => slugify(doc.art).includes(artistSlug))) || songs[0]
+}
+
+/**
+ * The instant-search API that powers letras.mus.br's own search box
+ * (`solr.sscdn.co`). Unlike scraping a general-purpose search engine,
+ * this is the site's own public read endpoint, so it isn't subject to
+ * anti-bot blocking of datacenter IPs.
+ *
+ * Tries an exact query first; a typo in the artist/song name (ex:
+ * "Souguelis" instead of "Souguellis") can make the exact query match
+ * nothing at all, so a fuzzy retry (`~1` per word) follows as a second
+ * attempt before giving up on this source.
+ */
+async function searchViaSolr(query: string, artistHint?: string | null): Promise<LetrasLink | null> {
+  let song = pickBestSong(await querySolr(query), artistHint)
+
+  if (!song) {
+    const fuzzyQuery = fuzzify(query)
+    if (fuzzyQuery !== query) {
+      song = pickBestSong(await querySolr(fuzzyQuery), artistHint)
+    }
+  }
+
+  if (!song) return null
 
   return {
     artistName: song.art,

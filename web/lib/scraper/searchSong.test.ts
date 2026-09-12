@@ -74,10 +74,12 @@ describe('searchSong', () => {
     })
   })
 
-  it('falls back to DuckDuckGo when Solr finds nothing', async () => {
+  it('retries Solr with fuzzy terms, then falls back to DuckDuckGo when both find nothing', async () => {
     const fetchMock = vi
       .fn()
-      // Solr: no song docs
+      // Solr, exact query: no song docs
+      .mockResolvedValueOnce(new Response('LetrasSug({"response":{"docs":[]}})', { status: 200 }))
+      // Solr, fuzzy retry: still nothing
       .mockResolvedValueOnce(new Response('LetrasSug({"response":{"docs":[]}})', { status: 200 }))
       // DuckDuckGo fallback: one matching result
       .mockResolvedValueOnce(
@@ -94,16 +96,39 @@ describe('searchSong', () => {
       songName: 'Epitáfio',
       fullUrl: 'https://www.letras.mus.br/titas/epitafio/',
     })
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('finds a typo-tolerant match via the fuzzy Solr retry', async () => {
+    const solrBody = JSON.stringify({
+      response: { docs: [{ art: 'Laura Souguellis', dns: 'laura-souguellis', txt: 'Santo Espírito', t: '2', url: '1' }] },
+    })
+
+    const fetchMock = vi
+      .fn()
+      // exact query ("Souguelis", missing one "l"): nothing
+      .mockResolvedValueOnce(new Response('LetrasSug({"response":{"docs":[]}})', { status: 200 }))
+      // fuzzy retry: finds it
+      .mockResolvedValueOnce(new Response(`LetrasSug(${solrBody})`, { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await searchSong('Santo Espírito Laura Souguelis')
+    expect(result).toEqual({
+      artistName: 'Laura Souguellis',
+      songName: 'Santo Espírito',
+      fullUrl: 'https://www.letras.mus.br/laura-souguellis/1/',
+    })
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
-  it('falls back to Bing when both Solr and DuckDuckGo find nothing', async () => {
+  it('falls back to Bing when Solr (exact + fuzzy) and DuckDuckGo find nothing', async () => {
     const bingHref =
       'https://www.bing.com/ck/a?u=a1' +
       Buffer.from('https://www.letras.mus.br/titas/epitafio/').toString('base64url')
 
     const fetchMock = vi
       .fn()
+      .mockResolvedValueOnce(new Response('LetrasSug({"response":{"docs":[]}})', { status: 200 }))
       .mockResolvedValueOnce(new Response('LetrasSug({"response":{"docs":[]}})', { status: 200 }))
       .mockResolvedValueOnce(new Response('<html><body></body></html>', { status: 200 }))
       .mockResolvedValueOnce(
@@ -120,6 +145,6 @@ describe('searchSong', () => {
       songName: 'Epitáfio',
       fullUrl: 'https://www.letras.mus.br/titas/epitafio/',
     })
-    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(fetchMock).toHaveBeenCalledTimes(4)
   })
 })
