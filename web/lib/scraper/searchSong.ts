@@ -4,35 +4,46 @@ import { extractLetrasUrlFromHref, type LetrasLink } from './extractLetrasUrl'
 
 const BASE_URL = 'https://www.letras.mus.br'
 
-async function searchViaLetras(query: string): Promise<LetrasLink | null> {
-  const searchUrl = `${BASE_URL}/busca/?q=${encodeURIComponent(query)}`
-  const html = await fetchHtml(searchUrl)
-  if (!html) return null
-
-  const $ = cheerio.load(html)
-  const result = $('ul.list-nav a[href]').first().length
-    ? $('ul.list-nav a[href]').first()
-    : $('.g-link').first()
-
-  if (!result.length) return null
-
-  const href = result.attr('href')
-  if (!href) return null
-
-  const link = extractLetrasUrlFromHref(href)
-  if (!link) return null
-
-  const linkText = result.text().trim()
-  const dashIndex = linkText.indexOf(' - ')
-  if (dashIndex !== -1) {
-    link.songName = linkText.slice(0, dashIndex).trim()
-    link.artistName = linkText.slice(dashIndex + 3).trim()
-  }
-
-  return link
+interface SolrDoc {
+  art: string
+  dns: string
+  txt: string
+  t: string
+  url: string
 }
 
-/** DuckDuckGo HTML endpoint, used as fallback when direct search is blocked. */
+/**
+ * The instant-search API that powers letras.mus.br's own search box
+ * (`solr.sscdn.co`). Unlike scraping a general-purpose search engine,
+ * this is the site's own public read endpoint, so it isn't subject to
+ * anti-bot blocking of datacenter IPs.
+ */
+async function searchViaSolr(query: string): Promise<LetrasLink | null> {
+  const searchUrl = `https://solr.sscdn.co/letras/m1/?wt=json&q=${encodeURIComponent(query)}`
+  const body = await fetchHtml(searchUrl)
+  if (!body) return null
+
+  // Response is JSONP-wrapped (`LetrasSug({...})`) regardless of the callback param.
+  const jsonText = body.replace(/^[^(]*\(/, '').replace(/\);?\s*$/, '')
+
+  let docs: SolrDoc[]
+  try {
+    docs = JSON.parse(jsonText)?.response?.docs ?? []
+  } catch {
+    return null
+  }
+
+  const song = docs.find((doc) => doc.t === '2')
+  if (!song) return null
+
+  return {
+    artistName: song.art,
+    songName: song.txt,
+    fullUrl: `${BASE_URL}/${song.dns}/${song.url}/`,
+  }
+}
+
+/** DuckDuckGo HTML endpoint, used as fallback when the Solr search finds nothing. */
 async function searchViaDuckDuckGo(query: string): Promise<LetrasLink | null> {
   const searchQuery = `${query} letras.mus.br`
   const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(searchQuery)}`
@@ -74,7 +85,7 @@ function decodeBingRedirect(href: string): string | null {
   }
 }
 
-/** Bing HTML search, used as a second fallback (DuckDuckGo's HTML endpoint frequently bot-challenges server IPs). */
+/** Bing HTML search, used as a last-resort fallback (also bot-challenges datacenter IPs, but less consistently than DuckDuckGo). */
 async function searchViaBing(query: string): Promise<LetrasLink | null> {
   const searchQuery = `${query} letras.mus.br`
   const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(searchQuery)}`
@@ -104,14 +115,13 @@ async function searchViaBing(query: string): Promise<LetrasLink | null> {
 }
 
 /**
- * Searches by song title (and optionally artist). Tries letras.mus.br
- * directly, then falls back to DuckDuckGo, then Bing, when the previous
- * step is blocked or finds nothing; mirrors `search_song` from
- * find_lyrics.py, with Bing added since DuckDuckGo's HTML endpoint
- * frequently bot-challenges requests from server/datacenter IPs.
+ * Searches by song title (and optionally artist). Tries letras.mus.br's
+ * own Solr-backed search API first (reliable, not anti-bot blocked),
+ * falling back to DuckDuckGo then Bing HTML scraping only if that finds
+ * nothing.
  */
 export async function searchSong(query: string): Promise<LetrasLink | null> {
-  const direct = await searchViaLetras(query)
+  const direct = await searchViaSolr(query)
   if (direct) return direct
 
   const viaDuckDuckGo = await searchViaDuckDuckGo(query)
