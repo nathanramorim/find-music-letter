@@ -27,7 +27,7 @@ export function SongInput({ value, onChange, disabled }: SongInputProps) {
       <textarea
         id="songs-textarea"
         className="min-h-40 w-full rounded-lg border border-border bg-background p-3 font-mono text-sm focus:border-primary focus:outline-none sm:min-h-48"
-        placeholder={'Legião Urbana - Tempo Perdido\nTitãs - Epitáfio\n# comentários são ignorados'}
+        placeholder={'Anjos de Resgate - O Primeiro Olhar\nEliana Ribeiro - Chuva de Graça\n# comentários são ignorados'}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         disabled={disabled}
