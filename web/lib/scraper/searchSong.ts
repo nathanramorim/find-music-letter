@@ -4,6 +4,9 @@ import { extractLetrasUrlFromHref, type LetrasLink } from './extractLetrasUrl'
 
 const BASE_URL = 'https://www.letras.mus.br'
 
+/** Kept short so a slow search source can't stall a song past the function time limit. */
+const SEARCH_TIMEOUT_MS = 8000
+
 /**
  * letras.mus.br's own autocomplete API (the `/busca/` page is rendered
  * client-side, so its server HTML never contains results). Returns JSONP:
@@ -44,7 +47,7 @@ export function parseSuggestResponse(body: string): LetrasLink | null {
 
 async function searchViaLetrasSuggest(query: string): Promise<LetrasLink | null> {
   const url = `${SUGGEST_URL}?q=${encodeURIComponent(query)}&wt=json&callback=LetrasSug`
-  const body = await fetchHtml(url)
+  const body = await fetchHtml(url, SEARCH_TIMEOUT_MS)
   if (!body) return null
   return parseSuggestResponse(body)
 }
@@ -53,7 +56,7 @@ async function searchViaLetrasSuggest(query: string): Promise<LetrasLink | null>
 async function searchViaDuckDuckGo(query: string): Promise<LetrasLink | null> {
   const searchQuery = `${query} letras.mus.br`
   const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(searchQuery)}`
-  const html = await fetchHtml(searchUrl)
+  const html = await fetchHtml(searchUrl, SEARCH_TIMEOUT_MS)
   if (!html) return null
 
   const $ = cheerio.load(html)

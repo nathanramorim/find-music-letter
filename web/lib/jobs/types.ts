@@ -1,27 +1,20 @@
-import type { SongRequest } from '../parsing/parseSongs'
-
 export type OutputFormat = 'docx' | 'pdf'
 export type OutputMode = 'merged' | 'separate'
-
-export interface JobOptions {
-  songs: SongRequest[]
-  format: OutputFormat
-  mode: OutputMode
-}
 
 export interface JobResultEntry {
   label: string
   ok: boolean
 }
 
-export type JobStatus = 'pending' | 'running' | 'done' | 'error'
+export type JobStatus = 'running' | 'done' | 'error'
 
+/** Client-side progress of a lyrics search + document generation run. */
 export interface Job {
-  id: string
   status: JobStatus
   total: number
   processed: number
   results: JobResultEntry[]
+  downloadUrl: string | null
   downloadFilename: string | null
   error: string | null
 }

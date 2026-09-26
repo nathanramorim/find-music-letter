@@ -11,9 +11,10 @@ export function DownloadResult({ job }: DownloadResultProps) {
 
   return (
     <div className="flex flex-col gap-3">
-      {job.status === 'done' && job.downloadFilename && (
+      {job.status === 'done' && job.downloadUrl && job.downloadFilename && (
         <a
-          href={`/api/jobs/${job.id}/download`}
+          href={job.downloadUrl}
+          download={job.downloadFilename}
           className="w-fit rounded-full bg-accent px-5 py-2 text-sm font-medium text-white hover:brightness-95"
         >
           Baixar {job.downloadFilename}
