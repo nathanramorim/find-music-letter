@@ -21,9 +21,13 @@ export async function fetchHtml(url: string, timeoutMs = 15000): Promise<string 
       headers: REALISTIC_HEADERS,
       signal: controller.signal,
     })
-    if (!response.ok) return null
+    if (!response.ok) {
+      console.warn(`[fetchHtml] ${response.status} ${url}`)
+      return null
+    }
     return await response.text()
-  } catch {
+  } catch (err) {
+    console.warn(`[fetchHtml] falha em ${url}: ${err instanceof Error ? err.message : err}`)
     return null
   } finally {
     clearTimeout(timeout)

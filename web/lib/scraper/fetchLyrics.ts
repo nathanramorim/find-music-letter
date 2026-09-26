@@ -19,11 +19,23 @@ export async function fetchLyrics(
   artist: string | null,
   song: string
 ): Promise<LyricsResult | null> {
-  const query = artist ? `${artist} ${song}` : song
-  const link = await searchSong(query)
+  // The input may be "Artista - Música" or "Música - Artista", so try both orders.
+  const queries = artist ? [`${artist} ${song}`, `${song} ${artist}`] : [song]
+  const link = await searchSong(queries[0], ...queries.slice(1))
   if (!link) return null
 
-  const printUrl = `${link.fullUrl.replace(/\/$/, '')}/print.html`
+  const baseUrl = link.fullUrl.replace(/\/$/, '')
+  const fromPrint = await fetchFromPrintPage(`${baseUrl}/print.html`, song, link.artistName)
+  if (fromPrint) return fromPrint
+
+  return fetchFromSongPage(`${baseUrl}/`, song, link.artistName)
+}
+
+async function fetchFromPrintPage(
+  printUrl: string,
+  song: string,
+  artistName: string
+): Promise<LyricsResult | null> {
   const html = await fetchHtml(printUrl)
   if (!html) return null
 
@@ -33,7 +45,7 @@ export async function fetchLyrics(
 
   const header = pageDiv.find('div.page-header').first()
   let pageTitle = song
-  let resolvedArtist = link.artistName
+  let resolvedArtist = artistName
   if (header.length) {
     const h1 = header.find('h1').first()
     const h2 = header.find('h2').first()
@@ -68,4 +80,33 @@ export async function fetchLyrics(
   if (!fullLyrics.trim()) return null
 
   return { artist: resolvedArtist, title: pageTitle, lyrics: fullLyrics }
+}
+
+/** Fallback: the regular song page, where each stanza is a `<p>` with `<br>` line breaks. */
+async function fetchFromSongPage(
+  url: string,
+  song: string,
+  artistName: string
+): Promise<LyricsResult | null> {
+  const html = await fetchHtml(url)
+  if (!html) return null
+
+  const $ = cheerio.load(html)
+  const lyricDiv = $('div.lyric-original').first()
+  if (!lyricDiv.length) return null
+
+  const stanzas: string[] = []
+  lyricDiv.find('p').each((_i, p) => {
+    const lines = ($(p).html() ?? '')
+      .split(/<br\s*\/?>/i)
+      .map((part) => cheerio.load(part).text().trim())
+      .filter(Boolean)
+    if (lines.length) stanzas.push(lines.join('\n'))
+  })
+
+  const fullLyrics = stanzas.join('\n\n')
+  if (!fullLyrics.trim()) return null
+
+  const title = $('h1').first().text().trim() || song
+  return { artist: artistName, title, lyrics: fullLyrics }
 }

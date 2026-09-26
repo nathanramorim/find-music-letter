@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { extractLetrasUrlFromHref } from './extractLetrasUrl'
-import { searchSong } from './searchSong'
+import { parseSuggestResponse, searchSong } from './searchSong'
 
 describe('extractLetrasUrlFromHref', () => {
   it('extracts artist/song from a numeric-id href', () => {
@@ -31,11 +31,47 @@ describe('searchSong', () => {
     vi.unstubAllGlobals()
   })
 
-  it('falls back to DuckDuckGo when the direct search finds nothing', async () => {
+  it('resolves the song via the letras.mus.br suggest API', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        'LetrasSug({"response":{"docs":[{"dns":"anjos-de-resgate","art":"Anjos de Resgate","t":"1"},' +
+          '{"dns":"anjos-de-resgate","url":"o-primeiro-olhar","txt":"O Primeiro Olhar","art":"Anjos de Resgate","t":"2"}]}})',
+        { status: 200 }
+      )
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await searchSong('O primeiro olhar Anjos de resgate')
+    expect(result).toEqual({
+      artistName: 'Anjos de Resgate',
+      songName: 'O Primeiro Olhar',
+      fullUrl: 'https://www.letras.mus.br/anjos-de-resgate/o-primeiro-olhar/',
+    })
+    expect(String(fetchMock.mock.calls[0][0])).toContain('solr.sscdn.co/letras/m1/')
+  })
+
+  it('tries alternative queries before falling back', async () => {
     const fetchMock = vi
       .fn()
-      // direct letras.mus.br search: no results
-      .mockResolvedValueOnce(new Response('<html><body></body></html>', { status: 200 }))
+      .mockResolvedValueOnce(new Response('LetrasSug({"response":{"docs":[]}})', { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          'LetrasSug({"response":{"docs":[{"dns":"eliana-ribeiro","url":"chuva-de-graca","txt":"Chuva de Graça","art":"Eliana Ribeiro","t":"2"}]}})',
+          { status: 200 }
+        )
+      )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await searchSong('Chuva de graça Eliana Ribeiro', 'Eliana Ribeiro Chuva de graça')
+    expect(result?.fullUrl).toBe('https://www.letras.mus.br/eliana-ribeiro/chuva-de-graca/')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('falls back to DuckDuckGo when the suggest API finds nothing', async () => {
+    const fetchMock = vi
+      .fn()
+      // suggest API blocked (ex: 422)
+      .mockResolvedValueOnce(new Response('', { status: 422 }))
       // DuckDuckGo fallback: one matching result
       .mockResolvedValueOnce(
         new Response(
@@ -52,5 +88,12 @@ describe('searchSong', () => {
       fullUrl: 'https://www.letras.mus.br/titas/epitafio/',
     })
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('parseSuggestResponse', () => {
+  it('ignores non-song docs and malformed bodies', () => {
+    expect(parseSuggestResponse('LetrasSug({"response":{"docs":[{"dns":"titas","t":"1"}]}})')).toBeNull()
+    expect(parseSuggestResponse('<html>blocked</html>')).toBeNull()
   })
 })
