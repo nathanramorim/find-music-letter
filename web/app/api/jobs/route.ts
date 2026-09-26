@@ -1,10 +1,11 @@
-import { NextResponse } from 'next/server'
+import { after, NextResponse } from 'next/server'
 import { parseSongsText } from '@/lib/parsing/parseSongs'
 import { createJob } from '@/lib/jobs/jobStore'
 import { runJob } from '@/lib/jobs/processJob'
 import type { OutputFormat, OutputMode } from '@/lib/jobs/types'
 
 export const runtime = 'nodejs'
+export const maxDuration = 300
 
 interface CreateJobBody {
   songsText: string
@@ -30,10 +31,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Nenhuma música válida encontrada no texto enviado.' }, { status: 400 })
   }
 
-  const job = createJob({ songs, format: body.format, mode: body.mode })
+  const options = { songs, format: body.format, mode: body.mode }
+  const job = createJob(options)
 
-  // Fire-and-forget: the job runs in the background while the client polls /api/jobs/:id.
-  void runJob(job.id, { songs, format: body.format, mode: body.mode })
+  // Runs after the response is sent; `after` keeps the serverless function alive until it finishes.
+  after(() => runJob(job.id, options))
 
   return NextResponse.json({ id: job.id }, { status: 201 })
 }

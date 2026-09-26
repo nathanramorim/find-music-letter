@@ -4,35 +4,52 @@ import { extractLetrasUrlFromHref, type LetrasLink } from './extractLetrasUrl'
 
 const BASE_URL = 'https://www.letras.mus.br'
 
-async function searchViaLetras(query: string): Promise<LetrasLink | null> {
-  const searchUrl = `${BASE_URL}/busca/?q=${encodeURIComponent(query)}`
-  const html = await fetchHtml(searchUrl)
-  if (!html) return null
+/**
+ * letras.mus.br's own autocomplete API (the `/busca/` page is rendered
+ * client-side, so its server HTML never contains results). Returns JSONP:
+ * `LetrasSug({"response":{"docs":[{"dns":"artist-slug","url":"song-slug","txt":"Song","art":"Artist","t":"2"}]}})`
+ * where `t: "2"` marks a song (vs. artists, albums, etc.).
+ */
+const SUGGEST_URL = 'https://solr.sscdn.co/letras/m1/'
 
-  const $ = cheerio.load(html)
-  const result = $('ul.list-nav a[href]').first().length
-    ? $('ul.list-nav a[href]').first()
-    : $('.g-link').first()
-
-  if (!result.length) return null
-
-  const href = result.attr('href')
-  if (!href) return null
-
-  const link = extractLetrasUrlFromHref(href)
-  if (!link) return null
-
-  const linkText = result.text().trim()
-  const dashIndex = linkText.indexOf(' - ')
-  if (dashIndex !== -1) {
-    link.songName = linkText.slice(0, dashIndex).trim()
-    link.artistName = linkText.slice(dashIndex + 3).trim()
-  }
-
-  return link
+interface SuggestDoc {
+  dns?: string
+  url?: string
+  txt?: string
+  art?: string
+  t?: string | number
 }
 
-/** DuckDuckGo HTML endpoint, used as fallback when direct search is blocked. */
+export function parseSuggestResponse(body: string): LetrasLink | null {
+  const start = body.indexOf('{')
+  const end = body.lastIndexOf('}')
+  if (start === -1 || end <= start) return null
+
+  let docs: SuggestDoc[]
+  try {
+    docs = JSON.parse(body.slice(start, end + 1))?.response?.docs ?? []
+  } catch {
+    return null
+  }
+
+  const doc = docs.find((d) => String(d.t) === '2' && d.dns && d.url)
+  if (!doc) return null
+
+  return {
+    artistName: doc.art?.trim() || doc.dns!,
+    songName: doc.txt?.trim() || doc.url!,
+    fullUrl: `${BASE_URL}/${doc.dns}/${doc.url}/`,
+  }
+}
+
+async function searchViaLetrasSuggest(query: string): Promise<LetrasLink | null> {
+  const url = `${SUGGEST_URL}?q=${encodeURIComponent(query)}&wt=json&callback=LetrasSug`
+  const body = await fetchHtml(url)
+  if (!body) return null
+  return parseSuggestResponse(body)
+}
+
+/** DuckDuckGo HTML endpoint, used as last-resort fallback. */
 async function searchViaDuckDuckGo(query: string): Promise<LetrasLink | null> {
   const searchQuery = `${query} letras.mus.br`
   const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(searchQuery)}`
@@ -63,13 +80,18 @@ async function searchViaDuckDuckGo(query: string): Promise<LetrasLink | null> {
 }
 
 /**
- * Searches by song title (and optionally artist). Tries letras.mus.br
- * directly and falls back to DuckDuckGo when blocked; mirrors
- * `search_song` from find_lyrics.py.
+ * Searches by song title (and optionally artist). Tries each query against
+ * the letras.mus.br suggest API, then falls back to DuckDuckGo.
  */
-export async function searchSong(query: string): Promise<LetrasLink | null> {
-  const direct = await searchViaLetras(query)
-  if (direct) return direct
+export async function searchSong(query: string, ...alternatives: string[]): Promise<LetrasLink | null> {
+  const queries = [query, ...alternatives].filter((q, i, all) => q && all.indexOf(q) === i)
 
-  return searchViaDuckDuckGo(query)
+  for (const q of queries) {
+    const found = await searchViaLetrasSuggest(q)
+    if (found) return found
+  }
+
+  const fallback = await searchViaDuckDuckGo(query)
+  if (!fallback) console.warn(`[searchSong] nenhum resultado para "${query}"`)
+  return fallback
 }
