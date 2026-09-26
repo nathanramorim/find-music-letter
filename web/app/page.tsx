@@ -5,9 +5,21 @@ import { SongInput } from './components/SongInput'
 import { OutputOptions } from './components/OutputOptions'
 import { ProgressView } from './components/ProgressView'
 import { DownloadResult } from './components/DownloadResult'
+import { parseSongsText } from '@/lib/parsing/parseSongs'
+import type { SongDocument } from '@/lib/docgen/types'
 import type { Job, OutputFormat, OutputMode } from '@/lib/jobs/types'
 
-const POLL_INTERVAL_MS = 1000
+/** Minimum delay between songs, to avoid hammering the source site (mirrors DELAY_SECONDS in find_lyrics.py). */
+const DELAY_MS = 1500
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function filenameFromResponse(res: Response, fallback: string) {
+  const match = res.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)
+  return match?.[1] ?? fallback
+}
 
 export default function Home() {
   const [songsText, setSongsText] = useState('')
@@ -15,44 +27,99 @@ export default function Home() {
   const [mode, setMode] = useState<OutputMode>('merged')
   const [job, setJob] = useState<Job | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const downloadUrlRef = useRef<string | null>(null)
 
-  const isRunning = job?.status === 'pending' || job?.status === 'running'
+  const isRunning = job?.status === 'running'
 
   useEffect(() => {
-    if (!job || job.status === 'done' || job.status === 'error') {
-      if (pollRef.current) clearInterval(pollRef.current)
-      return
-    }
-
-    pollRef.current = setInterval(async () => {
-      const res = await fetch(`/api/jobs/${job.id}`)
-      if (res.ok) setJob(await res.json())
-    }, POLL_INTERVAL_MS)
-
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current)
+      if (downloadUrlRef.current) URL.revokeObjectURL(downloadUrlRef.current)
     }
-  }, [job])
+  }, [])
+
+  function update(patch: Partial<Job>) {
+    setJob((current) => (current ? { ...current, ...patch } : current))
+  }
 
   async function handleSubmit() {
     setError(null)
-    setJob(null)
+    if (downloadUrlRef.current) {
+      URL.revokeObjectURL(downloadUrlRef.current)
+      downloadUrlRef.current = null
+    }
 
-    const res = await fetch('/api/jobs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ songsText, format, mode }),
-    })
-
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({ error: 'Falha ao iniciar o processamento.' }))
-      setError(body.error ?? 'Falha ao iniciar o processamento.')
+    const requests = parseSongsText(songsText)
+    if (requests.length === 0) {
+      setError('Nenhuma música válida encontrada no texto enviado.')
       return
     }
 
-    const { id } = await res.json()
-    setJob({ id, status: 'pending', total: 0, processed: 0, results: [], downloadFilename: null, error: null })
+    setJob({
+      status: 'running',
+      total: requests.length,
+      processed: 0,
+      results: [],
+      downloadUrl: null,
+      downloadFilename: null,
+      error: null,
+    })
+
+    const found: SongDocument[] = []
+    const results: Job['results'] = []
+
+    for (let i = 0; i < requests.length; i++) {
+      const { artist, song } = requests[i]
+      const label = artist ? `${artist} - ${song}` : song
+
+      let ok = false
+      try {
+        const res = await fetch('/api/lyrics', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ artist, song }),
+        })
+        if (res.ok) {
+          const body = (await res.json()) as { found: SongDocument | null }
+          if (body.found) {
+            found.push(body.found)
+            ok = true
+          }
+        }
+      } catch {
+        // network error: counted as not found
+      }
+
+      results.push({ label, ok })
+      update({ processed: i + 1, results: [...results] })
+
+      if (i < requests.length - 1) await sleep(DELAY_MS)
+    }
+
+    if (found.length === 0) {
+      update({ status: 'error', error: 'Nenhuma música encontrada.' })
+      return
+    }
+
+    try {
+      const res = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ songs: found, format, mode }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        update({ status: 'error', error: body.error ?? 'Falha ao gerar o documento.' })
+        return
+      }
+
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      downloadUrlRef.current = url
+      const fallback = mode === 'merged' ? `repertorio.${format}` : 'repertorio.zip'
+      update({ status: 'done', downloadUrl: url, downloadFilename: filenameFromResponse(res, fallback) })
+    } catch {
+      update({ status: 'error', error: 'Falha ao gerar o documento.' })
+    }
   }
 
   return (

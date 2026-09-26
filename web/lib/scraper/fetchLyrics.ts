@@ -3,6 +3,8 @@ import type { AnyNode } from 'domhandler'
 import { fetchHtml } from './http'
 import { searchSong } from './searchSong'
 
+const PAGE_TIMEOUT_MS = 10000
+
 export interface LyricsResult {
   artist: string
   title: string
@@ -36,7 +38,7 @@ async function fetchFromPrintPage(
   song: string,
   artistName: string
 ): Promise<LyricsResult | null> {
-  const html = await fetchHtml(printUrl)
+  const html = await fetchHtml(printUrl, PAGE_TIMEOUT_MS)
   if (!html) return null
 
   const $ = cheerio.load(html)
@@ -88,7 +90,7 @@ async function fetchFromSongPage(
   song: string,
   artistName: string
 ): Promise<LyricsResult | null> {
-  const html = await fetchHtml(url)
+  const html = await fetchHtml(url, PAGE_TIMEOUT_MS)
   if (!html) return null
 
   const $ = cheerio.load(html)
